@@ -1,4 +1,5 @@
-COMPSYS723 Assignment 2 Group 21
+# Cruise Control System
+Cruise Control System written in Esterel.
 
 1. Open terminal at this location
 2. make clean
