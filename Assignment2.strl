@@ -1,0 +1,310 @@
+% CruiseController Global Module
+module CruiseController:
+
+input on;
+input off;
+input resume;
+input set;
+input quick_decel;
+input quick_accel;
+input accel : float;
+input brake: float;
+input speed : float;
+
+
+output cruise_speed : float;
+output throttle : float;
+
+
+%String Interface
+output cruise_state_string : string;
+
+signal valid_speed, cruise_state  : integer, accelerating, braking in
+run CruiseSpeedManagement
+||
+run CruiseStateControlFSM
+||
+run ValidSpeed
+||
+run Interface
+||
+run Pedals
+||
+run ThrottleCommand
+end signal
+end module
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+module CruiseSpeedManagement:
+
+%IO GOES HERE
+input set;
+input quick_accel;
+input quick_decel;
+input cruise_state : integer;
+input speed : float;
+input valid_speed;
+input off;
+
+output cruise_speed := 30.0f : float;
+
+constant speed_inc = 2.5f : float;
+constant speed_max = 150.f : float;
+constant speed_min = 30.0f : float;
+
+
+var prev_cruise_state := 1 : integer in
+var temp : float in
+loop
+		if (not (?cruise_state = 1))  then
+			if (prev_cruise_state = 1 ) then
+				present(valid_speed) then
+					temp := ?speed;
+					emit cruise_speed(temp);
+					prev_cruise_state := ?cruise_state;
+				end present;
+			end if;
+
+			present(set) then
+			if (?speed >= speed_min and ?speed <= speed_max) then
+				temp := ?speed;
+				emit cruise_speed(temp);
+			end if;
+			if (?speed <= speed_min) then
+				temp := speed_min;
+				emit cruise_speed(temp);
+			end if;
+			if (?speed >= speed_max) then
+				temp := speed_max;
+				emit cruise_speed(temp);
+			end if;
+
+			end present;
+			present (quick_accel and not quick_decel) then 
+				if ((temp + speed_inc) <= speed_max) then
+					temp := temp + speed_inc;
+					emit cruise_speed(temp);
+				end if;
+			end present;
+
+			present (not quick_accel and quick_decel) then 
+				if ((temp - speed_inc) >= speed_min) then
+					temp := temp - speed_inc;
+					emit cruise_speed(temp);
+				end if;
+			end present;
+			
+		end if;
+		present(off) then
+			prev_cruise_state := 1;
+		end present;
+	
+			pause;
+end loop
+end var
+end var
+end module
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+module CruiseStateControlFSM:
+
+
+%IO GOES HERE
+input on;
+input valid_speed;
+input accelerating;
+input braking;
+input resume;
+input off;
+
+output cruise_state : integer;
+
+var state := 1 : integer in
+loop
+
+		if state = 1 then
+			present (on and valid_speed and not accelerating) then 
+				state := 2;
+				
+
+			end present;
+		end if;
+		if state = 2 then
+			present (off) then
+				state := 1;
+			
+
+			end present;
+
+			present (braking) then
+				state := 3;
+	
+
+			end present;
+
+			present(accelerating or not valid_speed) then
+				state := 4;
+
+
+			end present;
+		end if;
+		if state = 3 then
+			present (off) then
+				state := 1;
+
+
+			end present;
+
+			present (resume) then
+				present (not valid_speed or accelerating) then
+					state := 4;
+
+
+				end present;
+
+				state := 2;
+
+
+			end present;
+		end if;
+
+		if state = 4 then
+			present (off) then
+				state := 1;
+
+
+			end present;
+
+			present (not accelerating and valid_speed) then
+				state := 2;
+	
+
+			end present;
+			
+		end if;
+		emit cruise_state(state);
+	pause;
+end loop
+end var
+
+end module
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+module ValidSpeed:
+
+
+%IO GOES HERE
+
+input speed : float;
+
+output valid_speed;
+constant speed_inc = 2.5f : float;
+constant speed_max = 150.f : float;
+constant speed_min = 30.0f : float;
+
+loop
+	if (?speed >= speed_min and ?speed <= speed_max) then
+		emit valid_speed;
+	end if;
+	
+	pause;
+end loop
+end module
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+module Pedals:
+
+function regulatePedals(float) : integer;
+
+%IO GOES HERE
+input accel: float;
+input brake: float;
+
+output accelerating;
+output braking;
+
+loop
+
+		if (regulatePedals(?accel) = 1) then
+			emit accelerating;
+		end if;
+
+
+	
+
+		if (regulatePedals(?brake) = 1) then
+			emit braking;
+		end if;
+
+
+	pause;
+end loop
+end module
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+module Interface:
+
+
+%IO GOES HERE
+
+input cruise_state : integer;
+
+
+output cruise_state_string : string;
+
+loop
+	if (?cruise_state = 1) then
+		emit cruise_state_string("OFF");
+	end if;
+	if (?cruise_state = 2) then
+		emit cruise_state_string("ON");
+	end if;
+	if (?cruise_state = 3) then
+		emit cruise_state_string("STDBY");
+	end if;
+	if (?cruise_state = 4) then
+		emit cruise_state_string("DISABLE");
+	end if;
+	
+	pause;
+end loop
+end module
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+module ThrottleCommand:
+
+
+%IO GOES HERE
+
+function regulateThrottle(boolean, float, float) : float;
+
+input cruise_state : integer;
+input speed : float;
+input cruise_speed: float;
+input accel: float;
+
+output throttle : float;
+
+var is_going_on := false : boolean, accel_var := 0.0f : float in
+
+loop	
+	pause;
+	present (accel) then
+	accel_var := ?accel;
+	end present;
+	
+	if (not (?cruise_state = 2)) then
+		is_going_on := true;
+		emit throttle(accel_var);
+	else 
+		emit throttle(regulateThrottle(is_going_on, ?cruise_speed, ?speed));
+		is_going_on := false;
+	end if;
+	
+	
+end loop
+end var
+
+end module
